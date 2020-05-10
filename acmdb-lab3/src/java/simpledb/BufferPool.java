@@ -205,19 +205,26 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        Page page;
         if(this.lruCache.contains(pid)){
-            return lruCache.get(pid);
+            //System.out.println("Buffer Pool hit " + pid.toString());
+            page = lruCache.get(pid);
+            if (perm == Permissions.READ_WRITE)
+                page.markDirty(true, tid);
+            return page;
         }
         else{
+            //System.out.println("Buffer Pool not hit " + pid.toString());
             int tableId = pid.getTableId();
-            Page newPage = Database.getCatalog().getDatabaseFile(tableId).readPage(pid);
+            page = Database.getCatalog().getDatabaseFile(tableId).readPage(pid);
             try {
-                lruCache.put(pid, newPage);
+                lruCache.put(pid, page);
             }catch (IOException e){
                 throw new DbException("fail to put to cache");
             }
-
-            return newPage;
+            if (perm == Permissions.READ_WRITE)
+                page.markDirty(true, tid);
+            return page;
         }
     }
 
