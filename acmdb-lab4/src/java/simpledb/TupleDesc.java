@@ -36,6 +36,8 @@ public class TupleDesc implements Serializable {
         }
     }
 
+    private TDItem[] tupleDescriptions = null;
+
     /**
      * @return
      *        An iterator which iterates over all the field TDItems
@@ -43,12 +45,11 @@ public class TupleDesc implements Serializable {
      * */
     public Iterator<TDItem> iterator() {
         // some code goes here
-        return null;
+        ArrayList<TDItem> ret = new ArrayList<TDItem>(Arrays.asList(tupleDescriptions));
+        return ret.iterator();
     }
 
     private static final long serialVersionUID = 1L;
-    private TDItem[] tupleDescriptions = null;
-
     /**
      * Create a new TupleDesc with typeAr.length fields with fields of the
      * specified types, with associated named fields.

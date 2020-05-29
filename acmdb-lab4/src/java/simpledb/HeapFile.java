@@ -25,11 +25,13 @@ public class HeapFile implements DbFile {
 
     private File file;
     private TupleDesc tupleDesc;
+    private int numPage;
 
     public HeapFile(File f, TupleDesc td) {
         // some code goes here
         this.file = f;
         this.tupleDesc = td;
+
     }
 
     /**
@@ -180,8 +182,7 @@ public class HeapFile implements DbFile {
 
         @Override
         public boolean hasNext() throws DbException, TransactionAbortedException {
-            if(!isOpen || numPages() == 0)
-                return false;
+            if(currentPageIterator == null) return false;
             else{
                 if(currentPageIterator.hasNext()) return true;
                 else{
@@ -200,18 +201,9 @@ public class HeapFile implements DbFile {
 
         @Override
         public Tuple next() throws DbException, TransactionAbortedException, NoSuchElementException {
-            if(!hasNext())
-                throw new NoSuchElementException("No remaining element.");
-            else
-                if(currentPageIterator.hasNext())
-                    return currentPageIterator.next();
-                else {
-                    currentPageNumber += 1;
-                    HeapPage newPage = (HeapPage)(Database.getBufferPool().getPage(transactionId,
-                            new HeapPageId(getId(), currentPageNumber), Permissions.READ_ONLY));
-                    currentPageIterator = newPage.iterator();
-                    return currentPageIterator.next();
-                }
+            if(currentPageIterator == null || !currentPageIterator.hasNext())
+                throw new NoSuchElementException();
+            else return currentPageIterator.next();
         }
 
         @Override
