@@ -196,21 +196,24 @@ public class BTreeFile implements DbFile {
 			Field f) 
 					throws DbException, TransactionAbortedException {
 		// some code goes here
-		BTreePage pageCurrent = (BTreePage) this.getPage(tid, dirtypages, pid, perm);
-		if(pid.pgcateg() == BTreePageId.LEAF) return (BTreeLeafPage) pageCurrent;
+		BTreePage pageCurrent;
+		if(pid.pgcateg() == BTreePageId.LEAF){
+			pageCurrent = (BTreePage) this.getPage(tid, dirtypages, pid, perm);
+			return (BTreeLeafPage) pageCurrent;
+		}
 		else{
-			BTreeInternalPage pageToSearch = (BTreeInternalPage) pageCurrent;
+			BTreeInternalPage pageToSearch = (BTreeInternalPage) this.getPage(tid, dirtypages, pid, Permissions.READ_ONLY);
 			if(f == null){
-				return findLeafPage(tid, dirtypages, pageToSearch.getChildId(0), Permissions.READ_ONLY, f);
+				return findLeafPage(tid, dirtypages, pageToSearch.getChildId(0), perm, f);
 			}else {
 				BTreeEntry e = null;
 				Iterator<BTreeEntry> entryIterator = pageToSearch.iterator();
 				while(entryIterator.hasNext()){
 					e = entryIterator.next();
 					if(f.compare(Op.LESS_THAN_OR_EQ, e.getKey()))
-						return findLeafPage(tid, dirtypages, e.getLeftChild(), Permissions.READ_ONLY, f);
+						return findLeafPage(tid, dirtypages, e.getLeftChild(), perm, f);
 				}
-				if(e != null) return findLeafPage(tid, dirtypages, e.getRightChild(), Permissions.READ_ONLY, f);
+				if(e != null) return findLeafPage(tid, dirtypages, e.getRightChild(), perm, f);
 				else return null;
 			}
 		}
@@ -266,6 +269,7 @@ public class BTreeFile implements DbFile {
 		// the sibling pointers of all the affected leaf pages.  Return the page into which a 
 		// tuple with the given key field should be inserted.
         BTreeLeafPage emptyLeafPage = (BTreeLeafPage) getEmptyPage(tid, dirtypages, BTreePageId.LEAF);
+        dirtypages.putIfAbsent(emptyLeafPage.getId(), emptyLeafPage);
         int numTuple = page.getNumTuples();
 		int numTupleToMove = numTuple >> 1;
         BTreePageId oldRightSiblingId = page.getRightSiblingId();
@@ -317,6 +321,7 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage page, Field field) 
 					throws DbException, IOException, TransactionAbortedException {
 		BTreeInternalPage emptyInternalPage = (BTreeInternalPage) getEmptyPage(tid, dirtypages, BTreePageId.INTERNAL);
+		dirtypages.putIfAbsent(emptyInternalPage.getId(), emptyInternalPage);
 		int numEntries = page.getNumEntries();
 		int numEntriesToRemove = (numEntries >> 1);
 		if((numEntries & 1) == 0){
@@ -466,7 +471,7 @@ public class BTreeFile implements DbFile {
 	 */
 	Page getPage(TransactionId tid, HashMap<PageId, Page> dirtypages, BTreePageId pid, Permissions perm)
 			throws DbException, TransactionAbortedException {
-		if(dirtypages.containsKey(pid)) {
+		if(dirtypages.containsKey(pid) && dirtypages.get(pid) != null) {
 			return dirtypages.get(pid);
 		}
 		else {
@@ -491,12 +496,11 @@ public class BTreeFile implements DbFile {
 	public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
 			throws DbException, IOException, TransactionAbortedException {
 		HashMap<PageId, Page> dirtypages = new HashMap<PageId, Page>();
-
 		// get a read lock on the root pointer page and use it to locate the root page
 		BTreeRootPtrPage rootPtr = getRootPtrPage(tid, dirtypages);
 		BTreePageId rootId = rootPtr.getRootId();
 
-		if(rootId == null) { // the root has just been created, so set the root pointer to point to it		
+		if (rootId == null) { // the root has just been created, so set the root pointer to point to it
 			rootId = new BTreePageId(tableid, numPages(), BTreePageId.LEAF);
 			rootPtr = (BTreeRootPtrPage) getPage(tid, dirtypages, BTreeRootPtrPage.getId(tableid), Permissions.READ_WRITE);
 			rootPtr.setRootId(rootId);
@@ -505,7 +509,7 @@ public class BTreeFile implements DbFile {
 		// find and lock the left-most leaf page corresponding to the key field,
 		// and split the leaf page if there are no more slots available
 		BTreeLeafPage leafPage = findLeafPage(tid, dirtypages, rootId, Permissions.READ_WRITE, t.getField(keyField));
-		if(leafPage.getNumEmptySlots() == 0) {
+		if (leafPage.getNumEmptySlots() == 0) {
 			leafPage = splitLeafPage(tid, dirtypages, leafPage, t.getField(keyField));
 		}
 
@@ -600,6 +604,7 @@ public class BTreeFile implements DbFile {
 				mergeLeafPages(tid, dirtypages, leftSibling, page, parent, leftEntry);
 			}
 			else {
+				//System.out.println("steal: " + tid.hashCode());
 				stealFromLeafPage(page, leftSibling, parent, leftEntry, false);				
 			}
 		}
@@ -735,7 +740,7 @@ public class BTreeFile implements DbFile {
 			BTreeInternalPage page, BTreeInternalPage leftSibling, BTreeInternalPage parent,
 			BTreeEntry parentEntry) throws DbException, IOException, TransactionAbortedException {
 		// some code goes here
-		//System.out.println("STEAL INTERNAL LEFT");
+		//System.out.println("STEAL INTERNAL LEFT " + tid.hashCode());
 		int numRightPageEntry = page.getNumEntries();
 		int numLeftPageEntry = leftSibling.getNumEntries();
 		if(numLeftPageEntry < numRightPageEntry) throw new DbException("Invalid Stealing!");
@@ -785,7 +790,7 @@ public class BTreeFile implements DbFile {
 		// that the entries are evenly distributed. Be sure to update
 		// the corresponding parent entry. Be sure to update the parent
 		// pointers of all children in the entries that were moved.
-		//System.out.println("STEAL INTERNAL RIGHT");
+		//System.out.println(" STEAL INTERNAL RIGHT " + tid.hashCode());
 		int numRightPageEntry = rightSibling.getNumEntries();
 		int numLeftPageEntry = page.getNumEntries();
 		if(numLeftPageEntry > numRightPageEntry) throw new DbException("Invalid Stealing!");
@@ -837,7 +842,7 @@ public class BTreeFile implements DbFile {
 		// the sibling pointers, and make the right page available for reuse.
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
-		//System.out.println("MERGE LEAF");
+		//System.out.println(" MERGE LEAF " + tid.hashCode());
 		Iterator<Tuple> rightPageIterator = rightPage.iterator();
 		Tuple t;
 		BTreePageId newRightSiblingId = rightPage.getRightSiblingId();
@@ -887,7 +892,7 @@ public class BTreeFile implements DbFile {
 		// and make the right page available for reuse
 		// Delete the entry in the parent corresponding to the two pages that are merging -
 		// deleteParentEntry() will be useful here
-		//System.out.println("MERGE INTERNAL");
+		//System.out.println(" MERGE INTERNAL " + tid.hashCode());
 		Iterator<BTreeEntry> rightPageIterator = rightPage.iterator();
 		BTreePageId tmpRight = rightPage.iterator().next().getLeftChild();
 		BTreePageId tmpLeft = leftPage.reverseIterator().next().getRightChild();
@@ -965,19 +970,19 @@ public class BTreeFile implements DbFile {
 	public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) 
 			throws DbException, IOException, TransactionAbortedException {
 		HashMap<PageId, Page> dirtypages = new HashMap<PageId, Page>();
-
-		BTreePageId pageId = new BTreePageId(tableid, t.getRecordId().getPageId().pageNumber(), 
+		BTreePageId pageId = new BTreePageId(tableid, t.getRecordId().getPageId().pageNumber(),
 				BTreePageId.LEAF);
 		BTreeLeafPage page = (BTreeLeafPage) getPage(tid, dirtypages, pageId, Permissions.READ_WRITE);
 		page.deleteTuple(t);
-
+		//System.out.println("Delete " + t.getField(0));
+		//System.out.println(tid.hashCode() + " Before delete " + dirtypages.size());
 		// if the page is below minimum occupancy, get some tuples from its siblings
 		// or merge with one of the siblings
-		int maxEmptySlots = page.getMaxTuples() - page.getMaxTuples()/2; // ceiling
-		if(page.getNumEmptySlots() > maxEmptySlots) { 
+		int maxEmptySlots = page.getMaxTuples() - page.getMaxTuples() / 2; // ceiling
+		if (page.getNumEmptySlots() > maxEmptySlots) {
 			handleMinOccupancyPage(tid, dirtypages, page);
 		}
-
+		//System.out.println(tid.hashCode() + " After delete " + dirtypages.size());
 		ArrayList<Page> dirtyPagesArr = new ArrayList<Page>();
 		dirtyPagesArr.addAll(dirtypages.values());
 		return dirtyPagesArr;

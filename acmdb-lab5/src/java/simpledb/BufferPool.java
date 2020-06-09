@@ -4,6 +4,8 @@ import java.io.*;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -103,6 +105,21 @@ public class BufferPool {
             return tail;
         }
 
+        private Node removeLastNotDirty(){
+            //System.out.println("try remove last!");
+            Node toRemove = this.tail;
+            //System.out.println(toRemove.getPage().toString());
+            while (toRemove != null){
+                if(toRemove.getPage().isDirty() == null)
+                    break;
+                else
+                    toRemove = toRemove.prev;
+            }
+            if(toRemove != null)
+                removeNodeFromList(toRemove);
+            return toRemove;
+        }
+
         public synchronized Page get(PageId pageId){
             if(!pageMap.containsKey(pageId))
                 return null;
@@ -114,15 +131,19 @@ public class BufferPool {
             }
         }
 
-        public synchronized void put(PageId pageId, Page page) throws IOException{
+        public synchronized void put(PageId pageId, Page page) throws IOException, DbException{
+            if(page == null) return;
             if(this.pageMap.containsKey(pageId)){
                 Node n = pageMap.get(pageId);
                 Node n1 = removeNodeFromList(n);
+                n1.setPage(page);
                 insertAtBeginning(n1);
             }else {
                 Node n;
                 if (this.numPages == this.maxPages) {
-                    n = removeTail();
+                    n = removeLastNotDirty();
+                    if(n == null)
+                        throw new DbException("Cache full, can not evict!.");
                     Database.getCatalog().getDatabaseFile(n.getPage().getId().getTableId()).writePage(n.getPage());
                     this.pageMap.remove(n.page.getId());
                     n.setPage(page);
@@ -162,7 +183,10 @@ public class BufferPool {
         }
     }
 
-    LRUCache lruCache;
+    private final LRUCache lruCache;
+    private final LockManager lockManager;
+    private final ConcurrentHashMap<TransactionId, HashSet<PageId>> transactionIdPageId;
+
     /**
      * Creates a BufferPool that caches up to numPages pages.
      *
@@ -171,6 +195,8 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         this.lruCache = new LRUCache(numPages);
+        this.lockManager = new LockManager();
+        this.transactionIdPageId = new ConcurrentHashMap<>();
     }
     
     public static int getPageSize() {
@@ -205,12 +231,25 @@ public class BufferPool {
     public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // some code goes here
+        //System.out.println(tid.toString() + " " + pid.toString() + " " + perm.toString() + "\n");
+        lockManager.lock(tid, pid, perm);
+        this.transactionIdPageId.putIfAbsent(tid, new HashSet<PageId>());
+        this.transactionIdPageId.get(tid).add(pid);
         Page page;
         if(this.lruCache.contains(pid)){
             //System.out.println("Buffer Pool hit " + pid.toString());
             page = lruCache.get(pid);
-            if (perm == Permissions.READ_WRITE)
-                page.markDirty(true, tid);
+            if(page == null){
+                int tableId = pid.getTableId();
+                page = Database.getCatalog().getDatabaseFile(tableId).readPage(pid);
+                try {
+                    lruCache.put(pid, page);
+                }catch (Exception e){
+                    throw new DbException("fail to put to cache:" + e.toString());
+                }
+            }
+//            if (perm == Permissions.READ_WRITE)
+//                page.markDirty(true, tid);
             return page;
         }
         else{
@@ -219,11 +258,11 @@ public class BufferPool {
             page = Database.getCatalog().getDatabaseFile(tableId).readPage(pid);
             try {
                 lruCache.put(pid, page);
-            }catch (IOException e){
-                throw new DbException("fail to put to cache");
+            }catch (Exception e){
+                throw new DbException("fail to put to cache:" + e.toString());
             }
-            if (perm == Permissions.READ_WRITE)
-                page.markDirty(true, tid);
+//            if (perm == Permissions.READ_WRITE)
+//                page.markDirty(true, tid);
             return page;
         }
     }
@@ -240,6 +279,7 @@ public class BufferPool {
     public  void releasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        this.lockManager.unlock(tid, pid);
     }
 
     /**
@@ -250,13 +290,14 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
-        return false;
+        return lockManager.holdsLock(tid, p);
     }
 
     /**
@@ -270,6 +311,18 @@ public class BufferPool {
         throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        if(commit) {
+            flushPages(tid);
+        }
+        else{
+            try {
+                //System.out.println("discard!");
+                discardPages(tid);
+            }catch (Exception e){
+                System.out.println("We assume that there is no crash during transactionComplete " + e.toString());
+            }
+        }
+        this.lockManager.transactionFinished(tid);
     }
 
     /**
@@ -360,8 +413,10 @@ public class BufferPool {
         // not necessary for lab1
         Page p = this.lruCache.get(pid);
         if(p != null && p.isDirty() != null) {
+            //System.out.println("flush page " + pid.hashCode() + " to disk");
             Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
             p.markDirty(false, null);
+            p.setBeforeImage();
         }
     }
 
@@ -370,6 +425,34 @@ public class BufferPool {
     public synchronized  void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        if(!this.transactionIdPageId.containsKey(tid))
+            return;
+        HashSet<PageId> pageIds = this.transactionIdPageId.get(tid);
+        for(PageId pageId : pageIds){
+            //if(this.lruCache.contains(pageId))
+            flushPage(pageId);
+        }
+        this.transactionIdPageId.remove(tid);
+    }
+
+    public synchronized void discardPages(TransactionId tid) throws IOException, DbException{
+        if(!this.transactionIdPageId.containsKey(tid)) {
+            //System.out.println(tid.hashCode() + " not exist!");
+            return;
+        }
+        HashSet<PageId> pageIds = this.transactionIdPageId.get(tid);
+        //System.out.println(tid.hashCode() + " page set size " + pageIds.size());
+        for(PageId pageId : pageIds){
+//            if(this.lruCache.contains(pageId) && this.lruCache.get(pageId).isDirty() != null) {
+//                //System.out.println("read old " + pageId.hashCode() + "!");
+//                Page oldPage = Database.getCatalog().getDatabaseFile(pageId.getTableId()).readPage(pageId);
+//                this.lruCache.put(pageId, oldPage);
+//            }
+            this.lruCache.remove(pageId);
+            Page oldPage = Database.getCatalog().getDatabaseFile(pageId.getTableId()).readPage(pageId);
+            this.lruCache.put(pageId, oldPage);
+        }
+        this.transactionIdPageId.remove(tid);
     }
 
     /**

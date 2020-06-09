@@ -741,6 +741,9 @@ public class BTreeUtility {
 				 return error;
 			 }
 		 }
+		 public int[] getData(){
+		 	return tupdata;
+		 }
 	}
     
 	/**
@@ -771,6 +774,7 @@ public class BTreeUtility {
 		public void run() {
 			try {
 				tuple = insertedTuples.take();
+				//System.out.println("take tuple " + tuple.get(0));
 				if(bf.getTupleDesc().numFields() != tuple.size()) {
 					throw new DbException("tuple desc mismatch");
 				}

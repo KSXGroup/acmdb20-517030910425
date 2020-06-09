@@ -100,7 +100,7 @@ public class TableStats {
         this.tupleDesc = this.table.getTupleDesc();
         this.fieldMax = new int[this.tupleDesc.numFields()];
         this.fieldMin = new int[this.tupleDesc.numFields()];
-        DbFileIterator tupleIter = table.iterator(null);
+        DbFileIterator tupleIter = table.iterator(new TransactionId());
 
         Tuple tmp;
         int nf = this.tupleDesc.numFields();

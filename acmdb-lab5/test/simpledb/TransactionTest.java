@@ -56,7 +56,8 @@ public class TransactionTest extends TestUtil.CreateHeapFile {
     bp.getPage(tid1, p0, Permissions.READ_ONLY);
     bp.getPage(tid1, p1, Permissions.READ_WRITE);
     bp.transactionComplete(tid1, true);
-
+    System.out.println(tid1.toString());
+    System.out.println(tid2.toString());
     bp.getPage(tid2, p0, Permissions.READ_WRITE);
     bp.getPage(tid2, p0, Permissions.READ_WRITE);
   }
