@@ -28,7 +28,7 @@ public class BufferPool {
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
-    public static final int DEFAULT_PAGES = 50000;
+    public static final int DEFAULT_PAGES = 50;
 
 
     private static class Node{
