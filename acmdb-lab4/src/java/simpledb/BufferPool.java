@@ -26,7 +26,7 @@ public class BufferPool {
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
-    public static final int DEFAULT_PAGES = 50;
+    public static final int DEFAULT_PAGES = 400;
 
 
     private static class Node{
@@ -209,8 +209,8 @@ public class BufferPool {
         if(this.lruCache.contains(pid)){
             //System.out.println("Buffer Pool hit " + pid.toString());
             page = lruCache.get(pid);
-            if (perm == Permissions.READ_WRITE)
-                page.markDirty(true, tid);
+//            if (perm == Permissions.READ_WRITE)
+//                page.markDirty(true, tid);
             return page;
         }
         else{
@@ -222,8 +222,8 @@ public class BufferPool {
             }catch (IOException e){
                 throw new DbException("fail to put to cache");
             }
-            if (perm == Permissions.READ_WRITE)
-                page.markDirty(true, tid);
+//            if (perm == Permissions.READ_WRITE)
+//                page.markDirty(true, tid);
             return page;
         }
     }
