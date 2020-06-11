@@ -82,7 +82,7 @@ public class LockManager {
         return this.pageLocks.containsKey(pageId) && this.pageLocks.get(pageId).holdWrite(transactionId);
     }
 
-    public void transactionFinished(TransactionId transactionId){
+    public synchronized void transactionFinished(TransactionId transactionId){
         synchronized (this.pageLockSetOfTransaction) {
             if (this.pageLockSetOfTransaction.containsKey(transactionId)) {
                 for (PageLock p : this.pageLockSetOfTransaction.get(transactionId)) {

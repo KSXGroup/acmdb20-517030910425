@@ -28,7 +28,7 @@ public class BufferPool {
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
-    public static final int DEFAULT_PAGES = 50;
+    public static final int DEFAULT_PAGES = 50000;
 
 
     private static class Node{
@@ -185,7 +185,7 @@ public class BufferPool {
 
     private final LRUCache lruCache;
     private final LockManager lockManager;
-    private final ConcurrentHashMap<TransactionId, HashSet<PageId>> transactionIdPageId;
+    private final ConcurrentHashMap<TransactionId, HashMap<PageId, Permissions>> transactionIdPageId;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -233,8 +233,14 @@ public class BufferPool {
         // some code goes here
         //System.out.println(tid.toString() + " " + pid.toString() + " " + perm.toString() + "\n");
         lockManager.lock(tid, pid, perm);
-        this.transactionIdPageId.putIfAbsent(tid, new HashSet<PageId>());
-        this.transactionIdPageId.get(tid).add(pid);
+        synchronized (this.transactionIdPageId) {
+            this.transactionIdPageId.putIfAbsent(tid, new HashMap<PageId, Permissions>());
+            HashMap<PageId, Permissions> rwRecord = this.transactionIdPageId.get(tid);
+            Permissions res = rwRecord.get(pid);
+            if (res == null) res = perm;
+            else if(res.equals(Permissions.READ_ONLY) && perm.equals(Permissions.READ_WRITE)) res = perm;
+            rwRecord.put(pid, res);
+        }
         Page page;
         if(this.lruCache.contains(pid)){
             //System.out.println("Buffer Pool hit " + pid.toString());
@@ -427,12 +433,22 @@ public class BufferPool {
         // not necessary for lab1|lab2
         if(!this.transactionIdPageId.containsKey(tid))
             return;
-        HashSet<PageId> pageIds = this.transactionIdPageId.get(tid);
-        for(PageId pageId : pageIds){
-            //if(this.lruCache.contains(pageId))
-            flushPage(pageId);
+        synchronized (this.transactionIdPageId) {
+            HashMap<PageId, Permissions> pageIds = this.transactionIdPageId.get(tid);
+            for (PageId pageId : pageIds.keySet()) {
+                if (pageIds.get(pageId).equals(Permissions.READ_WRITE)) {
+                    //if(this.lruCache.contains(pageId))
+                    Page p = this.lruCache.get(pageId);
+                    if (p != null) {
+                        //System.out.println("flush page " + pid.hashCode() + " to disk");
+                        Database.getCatalog().getDatabaseFile(pageId.getTableId()).writePage(p);
+                        p.markDirty(false, null);
+                        p.setBeforeImage();
+                    }
+                }
+            }
+            this.transactionIdPageId.remove(tid);
         }
-        this.transactionIdPageId.remove(tid);
     }
 
     public synchronized void discardPages(TransactionId tid) throws IOException, DbException{
@@ -440,19 +456,22 @@ public class BufferPool {
             //System.out.println(tid.hashCode() + " not exist!");
             return;
         }
-        HashSet<PageId> pageIds = this.transactionIdPageId.get(tid);
-        //System.out.println(tid.hashCode() + " page set size " + pageIds.size());
-        for(PageId pageId : pageIds){
+        synchronized (this.transactionIdPageId) {
+            HashMap<PageId, Permissions> pageIds = this.transactionIdPageId.get(tid);
+            //System.out.println(tid.hashCode() + " page set size " + pageIds.size());
+            for (PageId pageId : pageIds.keySet()) {
 //            if(this.lruCache.contains(pageId) && this.lruCache.get(pageId).isDirty() != null) {
 //                //System.out.println("read old " + pageId.hashCode() + "!");
 //                Page oldPage = Database.getCatalog().getDatabaseFile(pageId.getTableId()).readPage(pageId);
 //                this.lruCache.put(pageId, oldPage);
 //            }
-            this.lruCache.remove(pageId);
-            Page oldPage = Database.getCatalog().getDatabaseFile(pageId.getTableId()).readPage(pageId);
-            this.lruCache.put(pageId, oldPage);
+                if (pageIds.get(pageId).equals(Permissions.READ_WRITE)) {
+                    Page oldPage = Database.getCatalog().getDatabaseFile(pageId.getTableId()).readPage(pageId);
+                    this.lruCache.put(pageId, oldPage);
+                }
+            }
+            this.transactionIdPageId.remove(tid);
         }
-        this.transactionIdPageId.remove(tid);
     }
 
     /**
