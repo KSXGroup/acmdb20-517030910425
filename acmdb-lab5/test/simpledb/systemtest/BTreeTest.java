@@ -26,11 +26,11 @@ import simpledb.Predicate.Op;
  * System test for the BTree
  */
 public class BTreeTest extends SimpleDbTestBase {
-    private final static Random r = new Random();
-    
-    private static final int POLL_INTERVAL = 100;
-    
-    /**
+	private final static Random r = new Random();
+
+	private static final int POLL_INTERVAL = 100;
+
+	/**
 	 * Helper method to clean up the syntax of starting a BTreeInserter thread.
 	 * The parameters pass through to the BTreeInserter constructor.
 	 */
@@ -40,7 +40,7 @@ public class BTreeTest extends SimpleDbTestBase {
 		bi.start();
 		return bi;
 	}
-    
+
 	/**
 	 * Helper method to clean up the syntax of starting a BTreeDeleter thread.
 	 * The parameters pass through to the BTreeDeleter constructor.
@@ -51,8 +51,8 @@ public class BTreeTest extends SimpleDbTestBase {
 		bd.start();
 		return bd;
 	}
-	
-	private void waitForInserterThreads(ArrayList<BTreeInserter> insertThreads) 
+
+	private void waitForInserterThreads(ArrayList<BTreeInserter> insertThreads)
 			throws Exception {
 		Thread.sleep(POLL_INTERVAL);
 		for(BTreeInserter thread : insertThreads) {
@@ -61,8 +61,8 @@ public class BTreeTest extends SimpleDbTestBase {
 			}
 		}
 	}
-	
-	private void waitForDeleterThreads(ArrayList<BTreeDeleter> deleteThreads) 
+
+	private void waitForDeleterThreads(ArrayList<BTreeDeleter> deleteThreads)
 			throws Exception {
 		Thread.sleep(POLL_INTERVAL);
 		for(BTreeDeleter thread : deleteThreads) {
@@ -71,114 +71,116 @@ public class BTreeTest extends SimpleDbTestBase {
 			}
 		}
 	}
-	
+
 	private int[] getRandomTupleData() {
 		int item1 = r.nextInt(BTreeUtility.MAX_RAND_VALUE);
 		int item2 = r.nextInt(BTreeUtility.MAX_RAND_VALUE);
 		return new int[]{item1, item2};
 	}
-	
+
 	@After
 	public void tearDown() throws Exception {
 		// set the page size back to the default
 		BufferPool.resetPageSize();
 		Database.reset();
 	}
-	
-    /** Test that doing lots of inserts and deletes in multiple threads works */
-    @Test public void testBigFile() throws Exception {
-    	// For this test we will decrease the size of the Buffer Pool pages
-    	BufferPool.setPageSize(1024);
-    	
-    	// This should create a B+ tree with a packed second tier of internal pages
+
+	/** Test that doing lots of inserts and deletes in multiple threads works */
+	@Test public void testBigFile() throws Exception {
+		// For this test we will decrease the size of the Buffer Pool pages
+		BufferPool.setPageSize(1024);
+
+		// This should create a B+ tree with a packed second tier of internal pages
 		// and packed third tier of leaf pages
-    	System.out.println("Creating large random B+ tree...");
-    	ArrayList<ArrayList<Integer>> tuples = new ArrayList<ArrayList<Integer>>();
+		System.out.println("Creating large random B+ tree...");
+		ArrayList<ArrayList<Integer>> tuples = new ArrayList<ArrayList<Integer>>();
 		BTreeFile bf = BTreeUtility.createRandomBTreeFile(2, 31000,
 				null, tuples, 0);
-		
+
 		// we will need more room in the buffer pool for this test
 		Database.resetBufferPool(500);
-    	
-    	ArrayBlockingQueue<ArrayList<Integer>> insertedTuples = new ArrayBlockingQueue<ArrayList<Integer>>(100000);
+
+		ArrayBlockingQueue<ArrayList<Integer>> insertedTuples = new ArrayBlockingQueue<ArrayList<Integer>>(100000);
 		insertedTuples.addAll(tuples);
 		assertEquals(31000, insertedTuples.size());
 		int size = insertedTuples.size();
-		
+
 		// now insert some random tuples
-		System.out.println("Inserting tuples...");
-    	ArrayList<BTreeInserter> insertThreads = new ArrayList<BTreeInserter>();
-		for(int i = 0; i < 200; i++) {
+//		System.out.println("Inserting tuples...1");
+		ArrayList<BTreeInserter> insertThreads = new ArrayList<BTreeInserter>();
+		for (int i = 0; i < 200; i++) {
 			BTreeInserter bi = startInserter(bf, getRandomTupleData(), insertedTuples);
 			insertThreads.add(bi);
 			// The first few inserts will cause pages to split so give them a little
 			// more time to avoid too many deadlock situations
 			Thread.sleep(r.nextInt(POLL_INTERVAL));
 		}
-		
-		for(int i = 0; i < 800; i++) {
+
+//		System.out.println("Inserting tuples...2");
+		for (int i = 0; i < 800; i++) {
 			BTreeInserter bi = startInserter(bf, getRandomTupleData(), insertedTuples);
 			insertThreads.add(bi);
 		}
-		
+
+//		System.out.println("Inserting tuples...3");
 		// wait for all threads to finish
-		waitForInserterThreads(insertThreads);	
+		waitForInserterThreads(insertThreads);
 		assertTrue(insertedTuples.size() > size);
-		
+
 		// now insert and delete tuples at the same time
 		System.out.println("Inserting and deleting tuples...");
-    	ArrayList<BTreeDeleter> deleteThreads = new ArrayList<BTreeDeleter>();
-		for(BTreeInserter thread : insertThreads) {
+		ArrayList<BTreeDeleter> deleteThreads = new ArrayList<BTreeDeleter>();
+		for (BTreeInserter thread : insertThreads) {
 			thread.rerun(bf, getRandomTupleData(), insertedTuples);
-    		BTreeDeleter bd = startDeleter(bf, insertedTuples);
-    		deleteThreads.add(bd);
+			BTreeDeleter bd = startDeleter(bf, insertedTuples);
+			deleteThreads.add(bd);
 		}
-		
+
 		// wait for all threads to finish
 		waitForInserterThreads(insertThreads);
 		waitForDeleterThreads(deleteThreads);
 		int numPages = bf.numPages();
 		size = insertedTuples.size();
-		
+
 		// now delete a bunch of tuples
 		System.out.println("Deleting tuples...");
-		for(int i = 0; i < 10; i++) {
-	    	for(BTreeDeleter thread : deleteThreads) {
+		for (int i = 0; i < 10; i++) {
+			for (BTreeDeleter thread : deleteThreads) {
 				thread.rerun(bf, insertedTuples);
 			}
-			
+
 			// wait for all threads to finish
-	    	waitForDeleterThreads(deleteThreads);
+			waitForDeleterThreads(deleteThreads);
 		}
 		assertTrue(insertedTuples.size() < size);
 		size = insertedTuples.size();
-		
+
 		// now insert a bunch of random tuples again
 		System.out.println("Inserting tuples...");
-		for(int i = 0; i < 10; i++) {
-	    	for(BTreeInserter thread : insertThreads) {
+		for (int i = 0; i < 10; i++) {
+			for (BTreeInserter thread : insertThreads) {
 				thread.rerun(bf, getRandomTupleData(), insertedTuples);
 			}
-		
+
 			// wait for all threads to finish
-	    	waitForInserterThreads(insertThreads);
+			waitForInserterThreads(insertThreads);
 		}
 		assertTrue(insertedTuples.size() > size);
 		size = insertedTuples.size();
 		// we should be reusing the deleted pages
 		assertTrue(bf.numPages() < numPages + 20);
-		
+
 		// kill all the threads
 		insertThreads = null;
 		deleteThreads = null;
-		
+
 		ArrayList<ArrayList<Integer>> tuplesList = new ArrayList<ArrayList<Integer>>();
 		tuplesList.addAll(insertedTuples);
 		TransactionId tid = new TransactionId();
-		
+//		System.out.println(tuplesList.size());
 		// First look for random tuples and make sure we can find them
 		System.out.println("Searching for tuples...");
-		for(int i = 0; i < 10000; i++) {
+		for (int i = 0; i < 10000; i++) {
 			int rand = r.nextInt(insertedTuples.size());
 			ArrayList<Integer> tuple = tuplesList.get(rand);
 			IntField randKey = new IntField(tuple.get(bf.keyField()));
@@ -186,9 +188,9 @@ public class BTreeTest extends SimpleDbTestBase {
 			DbFileIterator it = bf.indexIterator(tid, ipred);
 			it.open();
 			boolean found = false;
-			while(it.hasNext()) {
+			while (it.hasNext()) {
 				Tuple t = it.next();
-				if(tuple.equals(SystemTestUtil.tupleToList(t))) {
+				if (tuple.equals(SystemTestUtil.tupleToList(t))) {
 					found = true;
 					break;
 				}
@@ -196,32 +198,32 @@ public class BTreeTest extends SimpleDbTestBase {
 			assertTrue(found);
 			it.close();
 		}
-		
+
 		// now make sure all the tuples are in order and we have the right number
 		System.out.println("Performing sanity checks...");
-    	DbFileIterator it = bf.iterator(tid);
+		DbFileIterator it = bf.iterator(tid);
 		Field prev = null;
 		it.open();
 		int count = 0;
-		while(it.hasNext()) {
+		while (it.hasNext()) {
 			Tuple t = it.next();
-			if(prev != null) {
+			if (prev != null) {
 				assertTrue(t.getField(bf.keyField()).compare(Op.GREATER_THAN_OR_EQ, prev));
 			}
 			prev = t.getField(bf.keyField());
 			count++;
 		}
 		it.close();
+//		System.err.println("count = " + count + "tplst.size() = " + tuplesList.size());
 		assertEquals(count, tuplesList.size());
 		Database.getBufferPool().transactionComplete(tid);
-		
+
 		// set the page size back
 		BufferPool.resetPageSize();
-		
-    }
+	}
 
-    /** Make test compatible with older version of ant. */
-    public static junit.framework.Test suite() {
-        return new junit.framework.JUnit4TestAdapter(BTreeTest.class);
-    }
+	/** Make test compatible with older version of ant. */
+	public static junit.framework.Test suite() {
+		return new junit.framework.JUnit4TestAdapter(BTreeTest.class);
+	}
 }
